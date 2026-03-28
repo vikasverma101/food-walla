@@ -26,7 +26,7 @@ const itemSchema = new mongoose.Schema({
             "Chinese",
             "Fast Food",
             "Others"
-        ],
+        ], 
         required:true
     },
     price:{

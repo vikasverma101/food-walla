@@ -2,6 +2,17 @@ import User from "../models/user.model.js"
 import bcrypt, { hash } from "bcryptjs"
 import genToken from "../utils/token.js"
 import { sendOtpMail } from "../utils/mail.js"
+import dotenv from "dotenv"
+dotenv.config()
+
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/** Case-insensitive email lookup (trimmed). */
+const findUserByEmail = async (email) => {
+    const trimmed = String(email ?? "").trim()
+    if (!trimmed) return null
+    return User.findOne({ email: new RegExp(`^${escapeRegex(trimmed)}$`, "i") })
+}
 export const signUp=async (req,res) => {
     try {
         const {fullName,email,password,mobile,role}=req.body
@@ -64,7 +75,7 @@ export const signIn=async (req,res) => {
         return res.status(200).json(user)
 
     } catch (error) {
-        return res.status(500).json(`sign In error ${error}`)
+        return res.status(500).json({ message: `sign In error ${error}` })
     }
 }
 
@@ -73,14 +84,14 @@ export const signOut=async (req,res) => {
         res.clearCookie("token")
 return res.status(200).json({message:"log out successfully"})
     } catch (error) {
-        return res.status(500).json(`sign out error ${error}`)
+        return res.status(500).json({ message: `sign out error ${error}` })
     }
 }
 
 export const sendOtp=async (req,res) => {
   try {
     const {email}=req.body
-    const user=await User.findOne({email})
+    const user=await findUserByEmail(email)
     if(!user){
        return res.status(400).json({message:"User does not exist."})
     }
@@ -89,18 +100,20 @@ export const sendOtp=async (req,res) => {
     user.otpExpires=Date.now()+5*60*1000
     user.isOtpVerified=false
     await user.save()
-    await sendOtpMail(email,otp)
+    await sendOtpMail(user.email,otp)
     return res.status(200).json({message:"otp sent successfully"})
   } catch (error) {
-     return res.status(500).json(`send otp error ${error}`)
+     console.error("sendOtp", error)
+     return res.status(500).json({ message: error?.message || `Failed to send OTP: ${error}` })
   }  
 }
 
 export const verifyOtp=async (req,res) => {
     try {
         const {email,otp}=req.body
-        const user=await User.findOne({email})
-        if(!user || user.resetOtp!=otp || user.otpExpires<Date.now()){
+        const user=await findUserByEmail(email)
+        const otpStr=String(otp ?? "").trim()
+        if(!user || user.resetOtp!==otpStr || user.otpExpires<Date.now()){
             return res.status(400).json({message:"invalid/expired otp"})
         }
         user.isOtpVerified=true
@@ -109,16 +122,20 @@ export const verifyOtp=async (req,res) => {
         await user.save()
         return res.status(200).json({message:"otp verify successfully"})
     } catch (error) {
-         return res.status(500).json(`verify otp error ${error}`)
+         console.error("verifyOtp", error)
+         return res.status(500).json({ message: `verify otp error ${error}` })
     }
-}
+}  
 
 export const resetPassword=async (req,res) => {
     try {
         const {email,newPassword}=req.body
-        const user=await User.findOne({email})
+        const user=await findUserByEmail(email)
     if(!user || !user.isOtpVerified){
        return res.status(400).json({message:"otp verification required"})
+    }
+    if(!newPassword || String(newPassword).length<6){
+       return res.status(400).json({message:"password must be at least 6 characters."})
     }
     const hashedPassword=await bcrypt.hash(newPassword,10)
     user.password=hashedPassword
@@ -126,7 +143,8 @@ export const resetPassword=async (req,res) => {
     await user.save()
      return res.status(200).json({message:"password reset successfully"})
     } catch (error) {
-         return res.status(500).json(`reset password error ${error}`)
+         console.error("resetPassword", error)
+         return res.status(500).json({ message: `reset password error ${error}` })
     }
 }
 
@@ -152,6 +170,6 @@ export const googleAuth=async (req,res) => {
 
 
     } catch (error) {
-         return res.status(500).json(`googleAuth error ${error}`)
+         return res.status(500).json({ message: `googleAuth error ${error}` })
     }
 }

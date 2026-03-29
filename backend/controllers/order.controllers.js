@@ -4,14 +4,31 @@ import Shop from "../models/shop.model.js"
 import User from "../models/user.model.js"
 import { sendDeliveryOtpMail } from "../utils/mail.js"
 import RazorPay from "razorpay"
-import dotenv from "dotenv"
-import { count } from "console"
 
-dotenv.config()
-let instance = new RazorPay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+let razorpayClient = null
+let razorpayClientAttempted = false
+
+/** Lazily create Razorpay so the server can boot without keys; online pay routes need valid .env. */
+function getRazorpay() {
+    if (razorpayClientAttempted) {
+        return razorpayClient
+    }
+    razorpayClientAttempted = true
+    const keyId = (process.env.RAZORPAY_KEY_ID ?? "").trim()
+    const keySecret = (process.env.RAZORPAY_KEY_SECRET ?? "").trim()
+    if (!keyId || !keySecret) {
+        return null
+    }
+    try {
+        razorpayClient = new RazorPay({ key_id: keyId, key_secret: keySecret })
+    } catch {
+        razorpayClient = null
+    }
+    return razorpayClient
+}
+
+const razorpayNotConfiguredMessage =
+    "Online payments are not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env (Razorpay test keys: rzp_test_…). Use COD until then."
 
 export const placeOrder = async (req, res) => {
     try {
@@ -55,6 +72,10 @@ export const placeOrder = async (req, res) => {
         ))
 
         if (paymentMethod == "online") {
+            const instance = getRazorpay()
+            if (!instance) {
+                return res.status(503).json({ message: razorpayNotConfiguredMessage })
+            }
             const razorOrder = await instance.orders.create({
                 amount: Math.round(totalAmount * 100),
                 currency: 'INR',
@@ -119,6 +140,10 @@ export const placeOrder = async (req, res) => {
 
 export const verifyPayment = async (req, res) => {
     try {
+        const instance = getRazorpay()
+        if (!instance) {
+            return res.status(503).json({ message: razorpayNotConfiguredMessage })
+        }
         const { razorpay_payment_id, orderId } = req.body
         const payment = await instance.payments.fetch(razorpay_payment_id)
         if (!payment || payment.status != "captured") {
